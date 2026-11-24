@@ -1,4 +1,5 @@
 import os
+import re
 from typing import List, Dict, Any
 from rank_bm25 import BM25Okapi
 import chromadb
@@ -8,16 +9,13 @@ from src.config import settings
 class HybridComplianceRetriever:
     """
     Hybrid RAG Engine combining:
-    - Dense Search: ChromaDB with Local Default Embeddings (ONNX/MiniLM - 100% Local & Free)
+    - Dense Search: ChromaDB with Local Default Embeddings (ONNX/MiniLM)
     - Sparse Search: BM25 for precise regulatory clause matching
     - Fusion: Reciprocal Rank Fusion (RRF)
     """
     def __init__(self, collection_name: str = "uae_compliance_rules"):
         self.chroma_client = chromadb.PersistentClient(path=settings.CHROMA_PERSIST_DIR)
-        
-        # Free local embeddings running directly on your CPU (no OpenAI credit needed!)
         self.embedding_fn = embedding_functions.DefaultEmbeddingFunction()
-        
         self.collection = self.chroma_client.get_or_create_collection(
             name=collection_name,
             embedding_function=self.embedding_fn
@@ -25,6 +23,11 @@ class HybridComplianceRetriever:
         self.documents: List[str] = []
         self.doc_ids: List[str] = []
         self.bm25: BM25Okapi = None
+
+        # Automatically load and index default regulatory corpus if present
+        default_doc = "data/regulatory_docs/uae_aml_guidelines.md"
+        if os.path.exists(default_doc):
+            self.index_document(default_doc)
 
     def index_document(self, file_path: str):
         """Chunks and indexes regulatory documents into ChromaDB and BM25."""
@@ -34,17 +37,16 @@ class HybridComplianceRetriever:
         with open(file_path, "r", encoding="utf-8") as f:
             text = f.read()
 
-        # Split by regulatory rule sections
-        import re
+        # Split cleanly by section headings
         raw_chunks = re.split(r'\n(?=## \d+\. )', text)
         self.documents = []
         self.doc_ids = []
 
         for i, chunk in enumerate(raw_chunks):
             if chunk.strip():
-                clean_chunk = "## " + chunk if not chunk.startswith("#") else chunk
+                clean_chunk = chunk.strip()
                 doc_id = f"rule_chunk_{i}"
-                self.documents.append(clean_chunk.strip())
+                self.documents.append(clean_chunk)
                 self.doc_ids.append(doc_id)
 
         # 1. Index in ChromaDB (Dense)
@@ -57,7 +59,6 @@ class HybridComplianceRetriever:
         # 2. Tokenize and index in BM25 (Sparse)
         tokenized_corpus = [doc.lower().split() for doc in self.documents]
         self.bm25 = BM25Okapi(tokenized_corpus)
-        print(f"Successfully indexed {len(self.documents)} regulatory chunks into ChromaDB & BM25.")
 
     def hybrid_search(self, query: str, top_k: int = 2) -> List[Dict[str, Any]]:
         """Executes dense + sparse search and combines results via Reciprocal Rank Fusion."""
@@ -102,8 +103,6 @@ class HybridComplianceRetriever:
 
 if __name__ == "__main__":
     retriever = HybridComplianceRetriever()
-    retriever.index_document("data/regulatory_docs/uae_aml_guidelines.md")
-    
     test_query = "What are the rules regarding Politically Exposed Persons (PEPs) in DIFC?"
     matches = retriever.hybrid_search(test_query, top_k=1)
     
