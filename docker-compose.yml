@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  amana-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: amana-compliance-service
+    ports:
+      - "8000:8000"
+    environment:
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - GROQ_MODEL=${GROQ_MODEL}
+    volumes:
+      - ./.chroma:/app/.chroma
+    restart: unless-stopped
